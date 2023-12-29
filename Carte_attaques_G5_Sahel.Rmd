@@ -1,0 +1,448 @@
+---
+title: "Carte des attaques G5_Sahel"
+author: "DIOP Ousseynou"
+date: '2023-12-16'
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Première partie
+
+## Importation de la base ACLED
+
+```{r}
+pass <- here::here() #chemin relatif
+# pass : C:/Users/dell/Desktop/ENSAE/ISEP3/Statistique spatiale/Carte évènement ACLED
+
+pass_true <- paste0(pass,"/","ACLED-Western_Africa (1).csv") #Accés a notre base de données
+acled<- readr::read_csv(pass_true) #Lecture de notre base de données
+str(acled) #Structure de la base 
+class(acled)
+```
+
+## Transformation des données en type spatial
+```{r}
+acled_sf<- sf::st_as_sf(acled, coords = c("longitude", "latitude")) #changer les données en type spatial
+class(acled_sf) #class de la base de données
+str(acled_sf)
+```
+
+# Définition du système de coordonnées
+```{r}
+sf::st_crs(acled_sf) <- 4326 #système de coordonnées
+str(acled_sf)
+```
+
+# Selection des pays du G5 Sahel
+```{r}
+unique(acled_sf$pays) #voir les pays 
+acled_sf_Sahel =subset(acled_sf, pays %in% c("Burkina Faso","Mauritania","Mali","Niger")) #Selection des données
+```
+
+
+# Premier pas 
+```{r}
+graphe_1 <- ggplot2::ggplot(acled_sf_Sahel) +
+  ggspatial::geom_sf(data = acled_sf_Sahel, ggspatial::aes(fill = pays), color = "black", size = 0.5) #Affiche les évènements dans l'espace
+graphe_1 <- graphe_1 + ggplot2::guides(fill = FALSE) #guides(fill=FALSE) pour enlever la légende (n'a pas de sens ici)
+graphe_1
+```
+## Importation des shp des pays selectionnés
+
+```{r}
+#chemin relatif
+
+pass <- here::here() 
+pass_BFA <- paste0(pass,"/","gadm41_BFA_2.shp")
+pass_MLI <- paste0(pass,"/","gadm41_MLI_2.shp")
+pass_MRT <- paste0(pass,"/","gadm41_MRT_1.shp")
+pass_NER <- paste0(pass,"/","gadm41_NER_2.shp")
+pass_tchad <- paste0(pass,"/","gadm41_TCD_2.shp")
+
+
+#Importation des bases des pays du G5 SAHEL
+
+bfa <- sf::read_sf(pass_BFA)
+mli<- sf::read_sf(pass_MLI)
+mrt <- sf::read_sf(pass_MRT)
+ner <- sf::read_sf(pass_NER)
+tchad <- sf::read_sf(pass_tchad)
+
+```
+
+## Selection des variables d'interet
+
+```{r}
+
+#selection des variables
+mali_select <- dplyr::select(mli,GID_1,COUNTRY,NAME_1,geometry)
+bfa_select <- dplyr::select(bfa,GID_1,COUNTRY,NAME_1,geometry)
+niger_select <- dplyr::select(ner,GID_1,COUNTRY,NAME_1,geometry)
+mrt_select <- dplyr::select(mrt,GID_1,COUNTRY,NAME_1,geometry)
+tchad_select <-dplyr::select(tchad,GID_1,COUNTRY,NAME_1,geometry)
+
+#Append des bases  pour avoir une base des pays du G5 SAHEL
+
+pays_G5 <- rbind(mali_select,bfa_select,niger_select,mrt_select,tchad_select)
+
+# Vérification 
+
+graphe_test <- ggplot2::ggplot()+
+  ggspatial::geom_sf(data=pays_G5,ggspatial::aes(fill=COUNTRY),color="black",size=0.3)
+graphe_test
+
+```
+## Jointure des évènements au pays
+
+```{r}
+#renommons la variable COUNTRY  
+ pays_G5$pays <- pays_G5$COUNTRY
+ pays_G5$COUNTRY <- NULL
+ 
+# graphics
+ 
+graphic_even_G5 <-  ggplot2::ggplot()+
+  ggspatial::geom_sf(data=pays_G5,ggspatial::aes(fill=pays),color="black",size=0.3)+
+  ggspatial::geom_sf(data = acled_sf_Sahel, ggspatial::aes(fill = pays), color = "black", size = 0.5)
+
+graphic_even_G5
+
+
+# #Vérifications des modalités de la variables pays
+# 
+# unique(pays_G5$pays) # "Mali"         "Burkina Faso" "Niger"        "Mauritania"   "Chad"
+# unique(acled_sf_Sahel$pays) #"Burkina Faso" "Mauritania"   "Mali"         "Niger"
+# 
+# # On peut merger les deux bases maintenant
+# acled_vf <- sf::st_join(acled_sf_Sahel,join = sf::st_intersects,pays_G5)
+# graphe_t <- ggplot2::ggplot()+
+#   ggspatial::geom_sf(data=acled_vf,ggspatial::aes(fill=pays.y),color="black",size=0.3)
+# graphe_t
+```
+
+## 1) Comptons le nombre d'évènement dans chaque pays
+
+```{r}
+library(dplyr)
+# Aggrégation des données
+
+even_pays <- acled_sf_Sahel%>%
+ dplyr::group_by(pays)%>%
+  dplyr::summarise(nombre_even=n())
+
+even_pays
+
+## Ajout dans acled_sf_sahel
+
+acled_sf_Sahel <- acled_sf_Sahel%>%
+  dplyr::mutate(nombre_even=case_when(
+    pays=="Mali"~8018,
+    pays=="Burkina Faso"~8466,
+    pays=="Mauritania"~1276,
+    pays=="Niger"~3110,
+  ))
+acled_sf_Sahel
+
+## Ajout dans les pays du G5 Sahel
+
+pays_G5<- pays_G5 %>%
+    dplyr::mutate(nombre_even=case_when(
+    pays=="Mali"~8018,
+    pays=="Burkina Faso"~8466,
+    pays=="Mauritania"~1276,
+    pays=="Niger"~3110,))
+
+# Carte choroplète interactive tmap
+
+library(tmap)
+tmap_mode("view")
+pays_even <- tm_shape(pays_G5)+
+  tm_polygons("nombre_even",title="Nombre d'évènement")+
+  tm_borders("white", lwd = 0.5) +
+  tm_layout(title = "Nombre d'attaque")+
+  tm_text("pays", size = 0.7, col = "black", group = "unique") +
+  tm_compass(type = "arrow", position = c("left", "top"))+
+  tm_scale_bar(position = c("center","bottom"))
+
+ pays_even
+  
+
+```
+
+## 2) sélection des évènements de la Mauritanie par région
+
+```{r}
+# # esquisse::esquisser(pays_G5)
+
+# Prendre uniquement les évènements qui sont dans mauritania
+mrt_select #pour voir le bbox
+acled_mrt_even <- sf::st_crop(acled_sf_Sahel, xmin = -17.06652, ymin = 14.71555, xmax = -4.829955, ymax = 27.29807)
+
+ggplot2::ggplot()+
+  ggspatial::geom_sf(data=mrt_select,ggspatial::aes(fill=NAME_1),color="black",size=0.8)+
+  ggspatial::geom_sf(data=acled_mrt_even,ggspatial::aes(fill=pays),color="black",size=0.8)
+
+# Pas trop précis (car il ya des évènements du Mali). Faisons un subset
+
+acled_mrt_even <-  subset(acled_mrt_even, pays %in% c("Mauritania"))
+
+# Représentation des évènements de la Mauritania
+
+graphic_even_mrt <-  ggplot2::ggplot()+
+  ggspatial::geom_sf(data=mrt_select,ggspatial::aes(fill=NAME_1),color="black",size=0.3)+
+  ggspatial::geom_sf(data = acled_mrt_even, ggspatial::aes(fill = pays), color = "black", size = 0.5)
+
+
+graphic_even_mrt
+
+
+
+```
+
+## Jointure de la Mauritania et des évènements
+
+```{r}
+# Ici nous avons fait une jonction des deux bases 
+mrt_even_inter <- sf::st_join(acled_mrt_even,mrt_select,join=sf::st_intersects) 
+
+#st_intersects: les entités spatiales qui se croisent ou partagent une frontière commune seront incluses dans le résultat de la jointure.
+
+```
+
+## Calcul du nombre d'évènement par région
+
+```{r}
+# Aggrégation des données
+
+even_region <- mrt_even_inter%>%
+ dplyr::group_by(NAME_1)%>%
+  dplyr::summarise(nombre_even_reg=n())
+even_region
+
+# a <-  ggplot2::ggplot()+
+#   ggspatial::geom_sf(data=even_region,ggspatial::aes(fill=nombre_even_reg),color="black",size=0.3)
+# a
+```
+
+## Représentation spatiale 
+
+### Ajout de la variable nombre d'évènement
+
+```{r}
+library(dplyr)
+
+mrt_select <- mrt_select %>%
+  mutate(even_reg = case_when(
+    NAME_1 == "Adrar" ~ 15,
+    NAME_1 == "Assaba" ~ 40,
+    NAME_1 == "Brakna" ~ 25,
+    NAME_1 == "Dakhlet Nouadhibou" ~ 156,
+    NAME_1 == "Gorgol" ~ 16,
+    NAME_1 == "Guidimaka" ~ 5,
+    NAME_1 == "Hodh ech Chargui" ~ 37,
+    NAME_1 == "Hodh el Gharbi" ~ 14,
+    NAME_1 == "Inchiri" ~ 21,
+    NAME_1 == "Nouakchott" ~ 809,
+    NAME_1 == "Tagant" ~ 8,
+    NAME_1 == "Tiris Zemmour" ~ 80,
+    TRUE ~ 48  # Valeur par défaut si aucune condition n'est satisfaite
+  ))
+
+# Ajout sur mrt_even_inter
+
+mrt_even_inter <- mrt_even_inter %>%
+  mutate(even_reg = case_when(
+    NAME_1 == "Adrar" ~ 15,
+    NAME_1 == "Assaba" ~ 40,
+    NAME_1 == "Brakna" ~ 25,
+    NAME_1 == "Dakhlet Nouadhibou" ~ 156,
+    NAME_1 == "Gorgol" ~ 16,
+    NAME_1 == "Guidimaka" ~ 5,
+    NAME_1 == "Hodh ech Chargui" ~ 37,
+    NAME_1 == "Hodh el Gharbi" ~ 14,
+    NAME_1 == "Inchiri" ~ 21,
+    NAME_1 == "Nouakchott" ~ 809,
+    NAME_1 == "Tagant" ~ 8,
+    NAME_1 == "Tiris Zemmour" ~ 80,
+    TRUE ~ 48  # Valeur par défaut si aucune condition n'est satisfaite (la dernière région)
+  ))
+
+
+
+```
+
+
+### Carte choroplète
+
+```{r}
+# Carte choroplète avec leaflet
+
+library(leaflet)
+
+# palette de couleur
+palette <- colorNumeric( palette="viridis", domain=mrt_select$even_reg, na.color="transparent")
+palette(c(45,43))
+
+#carte avec leaflet pour délimité Mauritania
+
+choro_mrt <- leaflet(mrt_select) %>% 
+  addTiles()  %>% 
+  setView( lat=10, lng=0 , zoom=2) %>%
+  addPolygons( fillColor = ~palette(even_reg), stroke=FALSE )
+
+choro_mrt
+```
+
+### Carte choroplète
+```{r}
+# Définition palette de couleur en fonction des intervalles
+library(RColorBrewer)
+bins <- c(0,30,50,100,500,Inf)  ## Intervalle de couleur
+palette <- colorBin( palette="YlOrBr", domain=mrt_select$even_reg, na.color="transparent", bins=bins)
+ # YYlOrBr=type de palette(yelow_orange_Brown)
+
+## Definition des labels
+label_carte <- paste(
+  "pays: ",mrt_select$COUNTRY,"<br/>", 
+  "Région: ", mrt_select$NAME_1,"<br/>",
+    "Nombre d'évènement: ", mrt_select$even_reg) %>% 
+ lapply(htmltools::HTML) ## transforme chaque élément de la liste en objet HTML.
+
+carte <- leaflet(mrt_select) %>% 
+  addTiles()  %>% 
+  setView( lat=10, lng=0 , zoom=2) %>%
+  addPolygons( 
+    fillColor = ~palette(even_reg), 
+    stroke=TRUE, # bordure
+    fillOpacity = 0.9, 
+    color="white", 
+    weight=0.3,
+    label = label_carte,
+    labelOptions = labelOptions( 
+      style = list("font-weight" = "normal", padding = "3px 8px"), 
+      textsize = "13px", 
+      direction = "auto"
+    )
+  ) %>%
+   addLegend( pal=palette, values=~even_reg, opacity=0.9, title = "Nombre d'évènement", position = "bottomleft" )
+
+carte
+
+
+
+```
+
+# Deuxième partie 
+
+## Création de raster d'une résolution 10km x 10km
+
+```{r}
+library(raster)
+library(sf)
+r_crs <- CRS("+proj=longlat +datum=WGS84")
+r_ext <- extent(mrt_select)
+#r_ext <- extent(c(-17.06652, -4.829955,14.71555,27.29807)) # les bords 
+#r_res <- 10/111 # resolution : 0,09 degré = 10km 
+r_res <- 1
+rast_zero <- raster(crs=r_crs, ext=r_ext, resolution=r_res,vals=0)
+sf::st_crs(mrt_even_inter) <- r_crs
+
+mrt_raster_reg <- rasterize(mrt_even_inter, rast_zero, field=1, fun = "sum") 
+
+#L’option « field » est utilisée pour définir le champ du dataframe, ou la valeur numérique qui est utilisée pour coder les pixels.
+
+
+mrt_raster_reg_0 <- raster::reclassify(mrt_raster_reg, cbind(NA, 0))#Remplacer les NA par 0
+table(mrt_raster_reg[])
+
+plot(mrt_raster_reg)
+
+
+```
+
+## leaflet
+```{r}
+library(leaflet)
+library(ggspatial)
+
+centroid_mrt <- sf::st_centroid(mrt_select)
+centroid_mrt$geometry
+lfl <- leaflet() %>%
+  addTiles() %>%  
+  addMarkers(lng=-13.40356, lat=17.2477,label = "Mauritania", popup="Evènement Mauritania")
+ 
+lfl
+ma_carte <- lfl %>%
+  addRasterImage(mrt_raster_reg, opacity = 0.7)
+
+# Afficher la carte
+ma_carte
+
+
+# "cartes <- ggplot2::ggplot(mrt_select)+ggspatial::geom_sf(data=mrt_select)
+# 
+# # Convertir le raster en un objet sf pour l'utiliser avec ggplot2
+# raster_sf <- sf::st_as_sf(mrt_raster_reg)
+# 
+# # Créer le graphique ggplot en utilisant le raster et le shapefile
+# ggplot2::ggplot() +
+#   geom_sf(data =mrt_select , fill = "transparent", color = "black") +
+#   ggplot2::geom_raster(data = raster_sf, aes(fill = value), interpolate = TRUE) +
+#   scale_fill_viridis_c() + 
+#   theme_minimal()"
+
+
+```
+
+
+## 2)raster catégoriel
+
+```{r}
+##Création des catégories
+
+liste_categ<- c(-Inf, 5, 10, Inf)
+
+#Créer les catégories pour chaque cellule du raster
+
+categories <- raster::cut(mrt_raster_reg[], breaks = liste_categ, labels = c("[-Inf, 5]", "(5, 10]", "(10, Inf]"), include.lowest = TRUE)#cut crée des catégories pour chaque élément de la matrice en fonction des intervalles spécifiés
+
+## Nouveau raster où les valeurs représentent les catégories 
+
+raster_categorie <- raster(mrt_raster_reg)
+values(raster_categorie) <- as.numeric(categories) #Pour attribuer les valeurs numériques des catégories                                                      au nouveau raster raster_categorie.
+
+# Afficher les catégories
+print(categories)
+
+# affichage du raster
+
+plot(raster_categorie)
+```
+
+## Carte tmap
+```{r}
+library(leaflet)
+library(ggspatial)
+
+centroid_mrt <- sf::st_centroid(mrt_select)
+centroid_mrt$geometry
+lfl <- leaflet() %>%
+  addTiles() %>%  
+  addMarkers(lng=-13.40356, lat=17.2477,label = "Mauritania", popup="Evènement Mauritania")
+ 
+lfl
+ma_carte <- lfl %>%
+  addRasterImage(raster_categorie, opacity = 0.7)
+
+# Afficher la carte
+ma_carte
+```
+
+
+
+
